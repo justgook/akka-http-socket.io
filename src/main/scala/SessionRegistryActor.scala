@@ -1,4 +1,4 @@
-import akka.actor.{Actor, ActorLogging, ActorRef, Props, Terminated}
+import akka.actor.{Actor, ActorLogging, ActorRef, PoisonPill, Props, Terminated}
 
 class SessionRegistryActor(props: Props) extends Actor with ActorLogging {
 
@@ -31,7 +31,9 @@ class SessionRegistryActor(props: Props) extends Actor with ActorLogging {
       }
     case Disconnect(sid)                                          =>
       val newIncoming = incoming.get(sid) match {
-        case Some(_) => incoming - sid
+        case Some(actor) =>
+          actor ! PoisonPill
+          incoming - sid
         case None    =>
           log.error("cannot find out actor for sid please")
           incoming
