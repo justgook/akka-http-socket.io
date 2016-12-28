@@ -10,20 +10,21 @@ class SessionRegistryActor(props: Props) extends Actor with ActorLogging {
 
   def receive(incoming: Map[String, ActorRef], outgoing: Map[String, ActorRef]): Receive = {
 
-    case AskForActor(eio, None)                                   => //First connection
+    case AskForSID(eio, sessionId) => //First connection
       //TODO add switcher for protocol
-      val newActor: ActorRef = context.actorOf(props)
-      context watch newActor
-      val sid = java.util.UUID.randomUUID().toString
-      val pair: (String, ActorRef) = sid -> newActor
-      sender() ! pair
-      context become receive(incoming + pair, outgoing)
-    case AskForActor(eio, Some(sid))                              => //Protocol Update
-      incoming.get(sid) match {
-        case Some(actor) => sender() ! (sid -> actor)
-        case None        => log.error("cannot find actor for sid please")
+      val sid:String = sessionId match {
+        case Some(id) => id
+        case None     =>
+          val actor = context.actorOf(props)
+          context watch actor
+          val pair: (String, ActorRef) = java.util.UUID.randomUUID().toString -> actor
+          context become receive(incoming + pair, outgoing)
+          pair._1
       }
+      sender() ! sid
+
     case UpdateOut(sid, out)                                      => //Register Out for SID (where to send)
+      log.info("UpdateOut - $sid")
       incoming.get(sid) match {
         case Some(_) =>
           context become receive(incoming, outgoing + (sid -> out))
@@ -34,7 +35,7 @@ class SessionRegistryActor(props: Props) extends Actor with ActorLogging {
         case Some(actor) =>
           actor ! PoisonPill
           incoming - sid
-        case None    =>
+        case None        =>
           log.error("cannot find out actor for sid please")
           incoming
       }
@@ -72,9 +73,8 @@ class SessionRegistryActor(props: Props) extends Actor with ActorLogging {
             case Some(out) => out ! OutgoingMessage(s"42$text") //TODO find why need that "2"
             case None      => log.warning("cannot find out pipe for - ", sid)
           }
-        case None => log.error("GOT OutgoingMessage({}) from Unknown Actor ({})", text, sender)
+        case None           => log.error("GOT OutgoingMessage({}) from Unknown Actor ({})", text, sender)
       }
-
 
     case Terminated(t) =>
       log.error("!got Terminate! - {}", t)
@@ -88,7 +88,7 @@ object SessionRegistryActor {
 
   def props(actor: Props): Props = Props(new SessionRegistryActor(actor))
 
-  case class AskForActor(eio: Int, sid: Option[String])
+  case class AskForSID(eio: Int, sid: Option[String] = None)
 
   case class UpdateOut(sid: String, actor: ActorRef)
 
@@ -99,6 +99,8 @@ object SessionRegistryActor {
   case class OutgoingMessage(text: String)
 
   case class BroadcastOutgoingMessage(text: String, excludeMe: Boolean = false)
+
+  private case class WrappedOutgoingMessage(sid: String, text: String)
 
 
 }

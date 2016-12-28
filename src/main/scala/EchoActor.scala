@@ -4,6 +4,9 @@ import akka.actor.{Actor, ActorLogging, Props}
 class EchoActor extends Actor with ActorLogging {
   log.info("EchoActor Created")
 
+  override def postStop(): Unit = {
+    log.error("!!EchoActor Died!!")
+  }
   def receive: Receive = {
     case IncomingMessage(sid, message) =>
       sender() ! BroadcastOutgoingMessage(message)

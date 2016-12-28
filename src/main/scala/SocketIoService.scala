@@ -1,4 +1,4 @@
-import SessionRegistryActor.{AskForActor, Disconnect, UpdateOut}
+import SessionRegistryActor.{AskForSID, Disconnect, UpdateOut}
 import akka.NotUsed
 import akka.actor.{ActorRef, ActorSystem, Props}
 import akka.http.scaladsl.model.HttpEntity.ChunkStreamPart
@@ -31,10 +31,10 @@ class SocketIoService(actorProps: Props, prefix: String = "socket.io")(implicit 
     } ~
       (get & parameter('transport, "EIO".as[Int], 'sid.?)) {
         case ("polling", eio, None) =>
-          val future: Future[(String, ActorRef)] = ask(socketActorRegistry, AskForActor(eio, None)).mapTo[(String, ActorRef)]
-          val result = Await.result(future, 1.second)
-          val message = s"""0{"sid":"${result._1}","upgrades":["websocket"],"pingInterval":$pingInterval,"pingTimeout":$pingTimeout}"""
-          setCookie(HttpCookie("io", value = result._1, path = Some("/"), httpOnly = true)) {
+          val future: Future[String] = ask(socketActorRegistry, AskForSID(eio)).mapTo[String]
+          val sid = Await.result(future, 1.second)
+          val message = s"""0{"sid":"$sid","upgrades":["websocket"],"pingInterval":$pingInterval,"pingTimeout":$pingTimeout}"""
+          setCookie(HttpCookie("io", value = sid, path = Some("/"), httpOnly = true)) {
             //            val message = openMessage(result._1)
             val sourceFactory: Source[ChunkStreamPart, NotUsed] =
               Source(
@@ -54,7 +54,7 @@ class SocketIoService(actorProps: Props, prefix: String = "socket.io")(implicit 
         case ("polling", eio, Some(sid)) =>
           val test = Source.actorRef[HttpEntity.ChunkStreamPart](10, OverflowStrategy.fail)
                      .mapMaterializedValue { outActor =>
-                       socketActorRegistry ! UpdateOut(sid, outActor)
+//                       socketActorRegistry ! UpdateOut(sid, outActor)
                        outActor ! HttpEntity.Chunk(ByteString(0))
                        outActor ! HttpEntity.Chunk(ByteString(0)) //<0 for string data, 1 for binary data>
                        outActor ! HttpEntity.Chunk(ByteString(97)) //>Lenght - Find Way how to more than possible
@@ -75,12 +75,10 @@ class SocketIoService(actorProps: Props, prefix: String = "socket.io")(implicit 
 
 
   private def newConnection(eio: Int, sessionId: Option[String]): Flow[Message, Message, NotUsed] = {
-    val (sid: String, _ /*userActor: ActorRef*/ ) = sessionId match {
-      case _ =>
-        val future: Future[(String, ActorRef)] = ask(socketActorRegistry, AskForActor(eio, None)).mapTo[(String, ActorRef)]
-        Await.result(future, 1.second)
+    val sid: String = {
+      val future: Future[String] = ask(socketActorRegistry, AskForSID(eio, sessionId)).mapTo[String]
+      Await.result(future, 1.second)
     }
-
     val incomingMessages: Sink[Message, NotUsed] =
       Flow[Message].map {
         // transform websocket message to domain message
@@ -94,9 +92,9 @@ class SocketIoService(actorProps: Props, prefix: String = "socket.io")(implicit 
         sessionId match {
           case Some(_) =>
             println("JUST UPGRADE NO NEED TO SEND SOMETHING")
-          case None =>
-            outActor ! SessionRegistryActor.OutgoingMessage (s"""0{"sid":"$sid","upgrades":["websocket"],"pingInterval":$pingInterval,"pingTimeout":$pingTimeout}""")
-            outActor ! SessionRegistryActor.OutgoingMessage (s"""40""")
+          case None    => //TODO move to SessionRegistryActor
+            outActor ! SessionRegistryActor.OutgoingMessage(s"""0{"sid":"$sid","upgrades":["websocket"],"pingInterval":$pingInterval,"pingTimeout":$pingTimeout}""")
+            outActor ! SessionRegistryActor.OutgoingMessage(s"""40""")
         }
         NotUsed
       }.map(
