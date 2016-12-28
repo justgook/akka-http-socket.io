@@ -1,4 +1,4 @@
-import SessionRegistryActor.{BroadcastOutgoingMessage, IncomingMessage, OutgoingMessage}
+import SessionRegistryActor._
 import akka.actor.{Actor, ActorLogging, Props}
 
 class EchoActor extends Actor with ActorLogging {
@@ -8,10 +8,14 @@ class EchoActor extends Actor with ActorLogging {
     log.error("!!EchoActor Died!!")
   }
   def receive: Receive = {
-    case IncomingMessage(sid, message) =>
-      sender() ! BroadcastOutgoingMessage(message)
-      sender() ! OutgoingMessage(message)
-    case msg                           => log.info(s"EchoActor received unknown $msg")
+    case Message(text) =>
+      sender() ! BroadcastOutgoingMessage(text)
+    case Ping(data) =>
+      log.info("EchoActor Got Ping - {}", data)
+      sender() ! Pong(data)
+    case msg           =>
+      log.info(s"EchoActor received unknown $msg - $sender")
+      sender() ! "121233123123 12312 312 321"
   }
 }
 
