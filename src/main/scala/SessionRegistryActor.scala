@@ -1,5 +1,5 @@
 import akka.NotUsed
-import akka.actor.{Actor, ActorLogging, ActorRef, Props, Terminated}
+import akka.actor.{Actor, ActorLogging, ActorRef, PoisonPill, Props, Terminated}
 import akka.stream.scaladsl.{Flow, Sink, Source}
 import akka.stream.{ActorMaterializer, OverflowStrategy}
 
@@ -35,6 +35,10 @@ class SessionRegistryActor(props: Props) extends Actor with ActorLogging {
                         .mapMaterializedValue { out =>
                           val actor = context.actorOf(props)
                           context.actorOf(Props(new Actor {
+                            override def postStop(): Unit = {
+                              actor ! PoisonPill
+                            }
+
                             def receive = {
                               case msg => actor.tell(msg, out)
                             }
@@ -57,7 +61,7 @@ class SessionRegistryActor(props: Props) extends Actor with ActorLogging {
     case Disconnect(sid)                                          =>
       val newIncoming = actors.get(sid) match {
         case Some(actor) =>
-          //          actor.kill()
+          actor ! PoisonPill
           actors - sid
         case None        =>
           log.error("Disconnect:newIncoming cannot find out actor for sid - {}", sid)
