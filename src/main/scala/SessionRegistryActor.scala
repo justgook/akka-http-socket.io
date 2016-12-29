@@ -1,5 +1,5 @@
 import akka.NotUsed
-import akka.actor.{Actor, ActorLogging, ActorRef, PoisonPill, Props, Terminated}
+import akka.actor.{Actor, ActorLogging, ActorRef, Props, Terminated}
 import akka.stream.scaladsl.{Flow, Sink, Source}
 import akka.stream.{ActorMaterializer, OverflowStrategy}
 
@@ -13,15 +13,15 @@ class SessionRegistryActor(props: Props) extends Actor with ActorLogging {
     log.error("!!SessionRegistryActor DIE!!")
   }
 
-  def receive(actors: Map[String, ActorHolder], clientsConnections: Map[String, ActorRef]): Receive = {
+  def receive(actors: Map[String, ActorRef], clientsConnections: Map[String, ActorRef]): Receive = {
 
     case AskForSID(eio, sessionId)                                => //First connection
       val result: String = sessionId match {
         case Some(id) => id
         case None     =>
           val sid = java.util.UUID.randomUUID().toString
-          val actor = context.actorOf(props)
-          context watch actor
+
+
           val fromActor: Sink[SessionRegistryActor.ActorRegistryCommunication, NotUsed] =
             Flow[SessionRegistryActor.ActorRegistryCommunication].map {
               case SessionRegistryActor.Pong(key)                                 => SessionRegistryActor.WrappedPong(sid, key)
@@ -30,11 +30,20 @@ class SessionRegistryActor(props: Props) extends Actor with ActorLogging {
               case SessionRegistryActor.BroadcastOutgoingMessage(text, excludeMe) => SessionRegistryActor.WrappedBroadcastOutgoingMessage(sid, text, excludeMe)
             }
             .to(Sink.actorRef[SessionRegistryActor.ActorRegistryCommunicationWrappers](self, Disconnect(sid)))
+
           val toActor = Source.actorRef[SessionRegistryActor.ActorRegistryCommunication](10, OverflowStrategy.fail)
+                        .mapMaterializedValue { out =>
+                          val actor = context.actorOf(props)
+                          context.actorOf(Props(new Actor {
+                            def receive = {
+                              case msg => actor.tell(msg, out)
+                            }
+                          }))
+                        }
           val ref = Flow[SessionRegistryActor.ActorRegistryCommunication]
                     .to(fromActor)
                     .runWith(toActor)
-          context become receive(actors + (sid -> ActorHolder(actor, ref)), clientsConnections)
+          context become receive(actors + (sid -> ref), clientsConnections)
           sid
       }
       sender() ! result
@@ -48,7 +57,7 @@ class SessionRegistryActor(props: Props) extends Actor with ActorLogging {
     case Disconnect(sid)                                          =>
       val newIncoming = actors.get(sid) match {
         case Some(actor) =>
-          actor.kill()
+          //          actor.kill()
           actors - sid
         case None        =>
           log.error("Disconnect:newIncoming cannot find out actor for sid - {}", sid)
@@ -134,21 +143,10 @@ object SessionRegistryActor {
 
   case class Ping(key: String) extends ToActor
 
-
   case class Pong(key: String) extends FromActor
 
-  private case class ActorHolder(actor: ActorRef, sender: ActorRef) {
-    def kill(): Unit = {
-      actor ! PoisonPill
-      sender ! PoisonPill
-    }
-
-    def !(msg: ActorRegistryCommunication): Unit = {
-      actor.tell(msg, sender)
-    }
-
-  }
   private case class WrappedPing(sid: String, key: String) extends ActorRegistryCommunicationWrappers
+
   private case class WrappedPong(sid: String, key: String) extends ActorRegistryCommunicationWrappers
 
   private case class WrappedMessage(sid: String, text: String) extends ActorRegistryCommunicationWrappers
